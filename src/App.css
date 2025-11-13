@@ -146,3 +146,11 @@ header h1 {
   display: block;
   margin-top: 0.5rem;
 }
+
+.feed-header {
+  margin-bottom: 1rem;
+}
+
+.feed-header h3 {
+  margin: 0;
+}
