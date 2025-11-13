@@ -28,3 +28,11 @@ export const GUESTBOOK_SCHEMA_ID = 'GUESTBOOK_SCHEMA_V1';
 
 // 3. Define our unique Event ID
 export const GUESTBOOK_EVENT_ID = 'GLOBAL_GUESTBOOK_UPDATE_V1';
+
+// 4. Event schema definition (used for registration & decoding)
+export const GUESTBOOK_EVENT_SIGNATURE = 'GuestbookSigned(string,string,string)';
+export const GUESTBOOK_EVENT_PARAMS = [
+  { name: 'senderName', paramType: 'string', isIndexed: false },
+  { name: 'messageContent', paramType: 'string', isIndexed: false },
+  { name: 'timestamp', paramType: 'string', isIndexed: false },
+];

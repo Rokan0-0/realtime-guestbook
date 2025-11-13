@@ -4,7 +4,7 @@ import { useSomnia } from '../context/SomniaContext';
 // 1. THE FIX: Import the single schema
 import { GUESTBOOK_EVENT_ID, GUESTBOOK_SCHEMA } from '../config'; 
 import { SchemaEncoder } from '@somnia-chain/streams';
-import { keccak256, toBytes, isAddress } from 'viem';
+import { keccak256, toBytes, isAddress, type Hex } from 'viem';
 
 // ... (Interface is the same) ...
 interface Message {
@@ -21,11 +21,101 @@ export const Guestbook = () => {
   const [isSending, setIsSending] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
 
-  // === PART 1: SUBSCRIBE (READ) - REMAINS DISABLED ===
+  // === PART 1: SUBSCRIBE (READ) ===
   useEffect(() => {
     if (!sdk || !schemaId) return;
-    console.log('Subscription code is disabled. Skipping subscribe call.');
-    console.log('Using Schema ID:', schemaId);
+
+    let isMounted = true;
+    let unsubscribe: (() => void) | undefined;
+    const decoder = new SchemaEncoder(GUESTBOOK_SCHEMA);
+
+    const startSubscription = async () => {
+      try {
+        const subscription = await sdk.streams.subscribe({
+          somniaStreamsEventId: GUESTBOOK_EVENT_ID,
+          ethCalls: [],
+          onlyPushChanges: true,
+          onData: (payload: unknown) => {
+            if (!isMounted) return;
+            console.log('Real-time data received:', payload);
+            try {
+              const eventPayload = payload as {
+                result?: { data?: string };
+                data?: string;
+                somniaEventStreams?: Array<{ data?: string }>;
+              };
+              const eventStreams = eventPayload?.somniaEventStreams;
+              const streamData =
+                eventStreams && eventStreams.length > 0 ? eventStreams[0]?.data : undefined;
+              const encodedData = eventPayload?.result?.data ?? eventPayload?.data ?? streamData;
+
+              if (!encodedData) {
+                console.warn('Subscription payload did not contain encoded data:', payload);
+                return;
+              }
+
+              if (typeof encodedData !== 'string') {
+                console.warn('Encoded data is not a string:', encodedData);
+                return;
+              }
+
+              const decodedItems = decoder.decodeData(encodedData as Hex);
+              const rootValue = decodedItems.at(0)?.value;
+              const tuple = Array.isArray(rootValue?.value) ? rootValue?.value : undefined;
+              const [senderName, messageContent, timestamp] = (tuple ?? []) as [
+                string,
+                string,
+                string
+              ];
+
+              if (!senderName || !messageContent || !timestamp) {
+                console.warn('Decoded payload missing values:', decodedItems);
+                return;
+              }
+
+              const nextMessage: Message = { senderName, messageContent, timestamp };
+
+              setMessages((prev) => {
+                const exists = prev.some(
+                  (entry) =>
+                    entry.senderName === nextMessage.senderName &&
+                    entry.messageContent === nextMessage.messageContent &&
+                    entry.timestamp === nextMessage.timestamp
+                );
+                if (exists) return prev;
+                return [nextMessage, ...prev];
+              });
+            } catch (decodeError) {
+              console.error('Failed to decode incoming message:', decodeError);
+            }
+          },
+          onError: (error: Error) => {
+            if (!isMounted) return;
+            console.error('Subscription error:', error);
+          },
+        });
+
+        if (subscription && isMounted) {
+          unsubscribe = subscription.unsubscribe;
+        }
+      } catch (subscriptionError: unknown) {
+        if (!isMounted) return;
+        console.error('Failed to start subscription:', subscriptionError);
+      }
+    };
+
+    startSubscription();
+
+    return () => {
+      isMounted = false;
+      if (unsubscribe) {
+        try {
+          unsubscribe();
+        } catch (unsubError: unknown) {
+          console.warn('Failed to clean up subscription:', unsubError);
+        }
+      }
+    };
   }, [sdk, schemaId]);
 
   // === PART 2: PUBLISH (WRITE) ===
@@ -54,10 +144,22 @@ export const Guestbook = () => {
         setIsSending(false);
         return;
       }
-      console.log('Schema registration verified. Proceeding with publish...');
-    } catch (checkError) {
-      console.warn('Could not verify schema registration:', checkError);
-      // Continue anyway - the transaction will fail if schema isn't registered
+      console.log('Data schema registration verified. Proceeding with publish...');
+    } catch (checkError: unknown) {
+      console.warn('Could not verify data schema registration:', checkError);
+    }
+
+    try {
+      const eventSchemas = await sdk.streams.getEventSchemasById([GUESTBOOK_EVENT_ID]);
+      const isEventRegistered = Array.isArray(eventSchemas) && eventSchemas.length > 0;
+      if (!isEventRegistered) {
+        alert('Event schema is not registered yet. Please reconnect your wallet to register the event schema first.');
+        setIsSending(false);
+        return;
+      }
+      console.log('Event schema registration verified.');
+    } catch (eventCheckError: unknown) {
+      console.warn('Could not verify event schema registration:', eventCheckError);
     }
     
     try {
@@ -87,46 +189,92 @@ export const Guestbook = () => {
       console.log('Data ID:', dataId);
       console.log('Encoded data length:', encodedData.length);
       
-      // Try using set() first - simpler and doesn't require event schema registration
-      // If this works, we can add events later
-      console.log('Calling set() to publish data...');
-      const hash = await sdk.streams.set([
-        { id: dataId, schemaId: schemaId, data: encodedData },
-      ]);
-      
-      // Note: We're using set() instead of setAndEmitEvents() for now
-      // Events require additional event schema registration which we can add later
+      console.log('Calling setAndEmitEvents() to publish data and emit event...');
+      const txResult = await sdk.streams.setAndEmitEvents(
+        [
+          { id: dataId, schemaId: schemaId, data: encodedData },
+        ],
+        [
+          { id: GUESTBOOK_EVENT_ID, argumentTopics: [], data: encodedData },
+        ]
+      );
 
-      console.log('Message sent! TxHash:', hash);
-      setMessages((prevMessages) => [{ senderName: name, messageContent: message, timestamp: timestamp }, ...prevMessages]);
+      if (txResult instanceof Error) {
+        throw txResult;
+      }
+
+      if (!txResult) {
+        throw new Error('Transaction failed without a returned hash.');
+      }
+
+      console.log('Message sent! TxHash:', txResult);
+
+      const optimisticMessage: Message = { senderName: name, messageContent: message, timestamp };
+      setMessages((prev) => {
+        const exists = prev.some(
+          (entry) =>
+            entry.senderName === optimisticMessage.senderName &&
+            entry.messageContent === optimisticMessage.messageContent &&
+            entry.timestamp === optimisticMessage.timestamp
+        );
+        if (exists) return prev;
+        return [optimisticMessage, ...prev];
+      });
       setMessage('');
 
-    } catch (err: any) {
-      console.error('Failed to send message:', err);
+    } catch (error: unknown) {
+      console.error('Failed to send message:', error);
+
+      const errorRecord =
+        error && typeof error === 'object' ? (error as Record<string, unknown>) : undefined;
+
       console.error('Error details:', {
-        message: err?.message,
-        code: err?.code,
-        name: err?.name,
-        cause: err?.cause,
-        shortMessage: err?.shortMessage,
-        details: err?.details
+        message:
+          typeof errorRecord?.message === 'string'
+            ? errorRecord.message
+            : error instanceof Error
+            ? error.message
+            : undefined,
+        code: errorRecord?.code,
+        name: errorRecord?.name,
+        cause: errorRecord?.cause,
+        shortMessage: errorRecord?.shortMessage,
+        details: errorRecord?.details,
       });
       
       // Provide more helpful error messages
       let errorMessage = 'Failed to send message. ';
       
       // Check for user rejection
-      if (err?.message?.includes('user rejected') || 
-          err?.message?.includes('User rejected') ||
-          err?.message?.includes('User denied') ||
-          err?.code === 4001) {
+      const errorMessageText =
+        typeof errorRecord?.message === 'string'
+          ? errorRecord.message
+          : error instanceof Error
+          ? error.message
+          : '';
+      const errorCode =
+        typeof errorRecord?.code === 'number'
+          ? errorRecord.code
+          : typeof errorRecord?.code === 'string'
+          ? Number(errorRecord.code)
+          : undefined;
+      const shortMessage =
+        typeof errorRecord?.shortMessage === 'string' ? errorRecord.shortMessage : undefined;
+
+      if (
+        errorMessageText?.includes('user rejected') ||
+        errorMessageText?.includes('User rejected') ||
+        errorMessageText?.includes('User denied') ||
+        errorCode === 4001
+      ) {
         errorMessage += 'Transaction was rejected in MetaMask. Please approve the transaction to send your message.';
-      } else if (err?.message?.includes('insufficient funds') || 
-                 err?.message?.includes('gas') ||
-                 err?.message?.includes('balance')) {
+      } else if (
+        errorMessageText?.includes('insufficient funds') ||
+        errorMessageText?.includes('gas') ||
+        errorMessageText?.includes('balance')
+      ) {
         errorMessage += 'Insufficient funds for gas. Please ensure you have testnet tokens (STT) in your wallet.';
-      } else if (err?.message?.includes('Internal JSON-RPC error') || 
-                 err?.code === -32603) {
+      } else if (errorMessageText?.includes('Internal JSON-RPC error') || errorCode === -32603) {
         errorMessage += 'Transaction failed with Internal JSON-RPC error.\n\n' +
           'Possible causes:\n' +
           '1. Transaction was rejected in MetaMask (click "Reject")\n' +
@@ -138,10 +286,10 @@ export const Guestbook = () => {
           '- Ensure you have STT tokens for gas\n' +
           '- Check that MetaMask is on Somnia Testnet (Chain ID: 50312)\n\n' +
           'Check the browser console for more details.';
-      } else if (err?.shortMessage) {
-        errorMessage += err.shortMessage;
-      } else if (err?.message) {
-        errorMessage += err.message;
+      } else if (shortMessage) {
+        errorMessage += shortMessage;
+      } else if (errorMessageText) {
+        errorMessage += errorMessageText;
       } else {
         errorMessage += 'Unknown error. Check console for details.';
       }
