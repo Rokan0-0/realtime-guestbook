@@ -24,7 +24,7 @@ Clone the repository:
 
 Bash
 
-git clone https://github.com/YourUsername/realtime-guestbook.git
+git clone https://github.com/Rokan0-0/realtime-guestbook.git
 cd realtime-guestbook
 Install dependencies:
 
