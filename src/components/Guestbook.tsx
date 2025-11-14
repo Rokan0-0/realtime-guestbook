@@ -1,7 +1,7 @@
 // src/components/Guestbook.tsx
-import { useState } from 'react'; // Removed useEffect and useCallback
+import { useState } from 'react';
 import { useSomnia } from '../context/SomniaContext';
-import { GUESTBOOK_EVENT_ID, GUESTBOOK_SCHEMA } from '../config'; 
+import { GUESTBOOK_SCHEMA } from '../config'; 
 import { SchemaEncoder } from '@somnia-chain/streams';
 import { keccak256, toBytes, isAddress } from 'viem';
 
@@ -12,23 +12,17 @@ interface Message {
   timestamp: string;
 }
 
-// Define the shape of the decoded payload
-type DecodedPayload = [{ 
-  name: string, 
-  type: string, 
-  value: [string, string, string] 
-}];
-
 export const Guestbook = () => {
   const { sdk, account, schemaId } = useSomnia();
   const [name, setName] = useState('');
   const [message, setMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]); // This will only hold session messages
+  const [messages, setMessages] = useState<Message[]>([]); // Session-only messages
 
-  // === PART 1: SUBSCRIBE/READ - REMOVED ===
-  // All useEffect and loadMessages code is gone.
-  // The SDK's subscribe() is broken, and get() does not exist.
+  // NOTE: The SDK does not have a get() method, and subscribe() is broken.
+  // Therefore, we can only show messages sent during this session.
+  // Messages are successfully written to the chain via sdk.streams.set(),
+  // but reading them back requires functionality that doesn't exist in the current SDK version.
 
   // === PART 2: PUBLISH (WRITE) ===
   // This is your 100% working code from Cursor
@@ -72,8 +66,8 @@ export const Guestbook = () => {
       console.log('Message sent! TxHash:', hash);
       setMessage('');
       
-      // Manually add the new message to the top of our local list
-      // This is our *only* way to show data
+      // Add the new message to the session feed
+      // Note: This message is now on-chain, but we can't read it back due to SDK limitations
       const newMessage: Message = { senderName: name, messageContent: message, timestamp: timestamp };
       setMessages((prevMessages) => [newMessage, ...prevMessages]);
 
@@ -117,21 +111,27 @@ export const Guestbook = () => {
       
       <div className="guestbook-feed">
         <div className="feed-header">
-          <h3>Live Feed (Your messages this session)</h3>
-          {/* Refresh button is removed as it's not possible to load */}
+          <h3>Session Feed</h3>
+          <small className="feed-note">(Messages sent this session)</small>
         </div>
         {messages.length === 0 ? (
-          <p className="loading">No messages sent yet this session.</p>
+          <p className="loading">No messages sent yet this session. Sign the guestbook to see your message here!</p>
         ) : (
-          messages.map((msg, index) => (
-            <div key={index} className="message-card">
-              <p>"{msg.messageContent}"</p>
-              <strong>- {msg.senderName}</strong>
-              <small>
-                {new Date(msg.timestamp).toLocaleString()}
-              </small>
-            </div>
-          ))
+          <>
+            <p className="feed-info">
+              <small>Note: Messages are published to the blockchain, but the SDK doesn't support reading them back. 
+              This feed shows only messages sent during this session.</small>
+            </p>
+            {messages.map((msg, index) => (
+              <div key={`${msg.senderName}-${msg.timestamp}-${index}`} className="message-card">
+                <p>"{msg.messageContent}"</p>
+                <strong>- {msg.senderName}</strong>
+                <small>
+                  {new Date(msg.timestamp).toLocaleString()}
+                </small>
+              </div>
+            ))}
+          </>
         )}
       </div>
     </div>
