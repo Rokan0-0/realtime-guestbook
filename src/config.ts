@@ -19,20 +19,18 @@ export const somniaTestnet = defineChain({
   },
 });
 
-// 1. THE FIX: A single, unified, NAMED tuple schema
-// We will use this for computeSchemaId AND SchemaEncoder
-export const GUESTBOOK_SCHEMA = `(string senderName, string messageContent, string timestamp)`;
+export const GUESTBOOK_SCHEMA = `(address author, string message, uint64 timestamp)`;
 
 // 2. Define our unique Schema ID (human-readable identifier for registration)
-export const GUESTBOOK_SCHEMA_ID = 'GUESTBOOK_SCHEMA_V1';
+export const GUESTBOOK_SCHEMA_ID = 'GUESTBOOK_SCHEMA_V2_FINAL'; // <-- Changed to avoid conflicts
 
 // 3. Define our unique Event ID
-export const GUESTBOOK_EVENT_ID = 'GLOBAL_GUESTBOOK_UPDATE_V1';
+export const GUESTBOOK_EVENT_ID = 'GLOBAL_GUESTBOOK_UPDATE_V2_FINAL'; // <-- Changed to avoid conflicts
 
 // 4. Event schema definition (used for registration & decoding)
-export const GUESTBOOK_EVENT_SIGNATURE = 'GuestbookSigned(string,string,string)';
+export const GUESTBOOK_EVENT_SIGNATURE = 'GuestbookSigned(address,string,uint64)';
 export const GUESTBOOK_EVENT_PARAMS = [
-  { name: 'senderName', paramType: 'string', isIndexed: false },
-  { name: 'messageContent', paramType: 'string', isIndexed: false },
-  { name: 'timestamp', paramType: 'string', isIndexed: false },
+  { name: 'author', paramType: 'address', isIndexed: true }, // <-- Indexed for filtering
+  { name: 'message', paramType: 'string', isIndexed: false },
+  { name: 'timestamp', paramType: 'uint64', isIndexed: false },
 ];
