@@ -48,10 +48,11 @@ export const Guestbook = () => {
       // 3. Encode the data using the tuple format (this is the working format)
       const encoder = new SchemaEncoder(GUESTBOOK_SCHEMA);
       const timestamp = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
+      const timestampBigInt = BigInt(timestamp); // Convert to BigInt for uint64 type
       
       // SchemaEncoder works with tuple format: values in order matching the schema
       const payload = [
-        { name: '', type: '(address,string,uint64)', value: [account, message, timestamp] }
+        { name: '', type: '(address,string,uint64)', value: [account, message, timestampBigInt] }
       ];
       const encodedData = encoder.encodeData(payload);
       const dataId = keccak256(toBytes(`guestbook-${account}-${timestamp}`)); 
@@ -64,9 +65,8 @@ export const Guestbook = () => {
 
       console.log('Message sent! TxHash:', hash);
 
-      // 4. THE FIX: Try to emit an event so subscribers can receive the message
+      // 4. Try to emit an event so subscribers can receive the message
       // Note: The SDK's emit method may not exist or work as expected
-      console.log('Attempting to emit event for new message...');
       try {
         // Check if emit method exists before calling
         if ('emit' in sdk.streams && typeof sdk.streams.emit === 'function') {
@@ -76,15 +76,14 @@ export const Guestbook = () => {
           );
 
           if (eventResult instanceof Error) {
-            console.error('Failed to emit event:', eventResult);
+            // Silently handle emit errors - message is already published
           } else {
             console.log('Event emitted successfully! TxHash:', eventResult);
           }
-        } else {
-          console.warn('SDK streams.emit() method not available');
         }
+        // Silently skip if emit method is not available
       } catch (emitError) {
-        console.warn('Error emitting event (message still published):', emitError);
+        // Silently handle emit errors - message is already published
       }
 
       // Add message to context immediately (optimistic update)

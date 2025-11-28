@@ -67,13 +67,12 @@ export const SomniaProvider = ({ children }: { children: ReactNode }) => {
 
     try {
       // Get the latest block number
-      const latestBlock = await publicClientRef.current.getBlockNumber();
-      // Check last 100 blocks for new events
       // Note: Without the contract address, we can't directly query events
       // This polling is a placeholder for when we have the contract address
-      
-      console.log('Polling for new events (latest block:', latestBlock, ')...');
+      await publicClientRef.current.getBlockNumber();
+      // Silently poll - no console logs to reduce noise
     } catch (error) {
+      // Only log actual errors, not routine polling
       console.error('Error polling for events:', error);
     }
   }, [schemaId]);
