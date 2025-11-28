@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useSomnia, type GuestbookMessage } from '../context/SomniaContext';
 import { GUESTBOOK_SCHEMA, GUESTBOOK_EVENT_ID } from '../config'; 
 import { SchemaEncoder } from '@somnia-chain/streams';
-import { keccak256, toBytes, isAddress } from 'viem';
+import { keccak256, toBytes, isAddress, type Hex, type Address } from 'viem';
+import { StatusPanel } from './StatusPanel';
 
 export const Guestbook = () => {
   const { sdk, account, schemaId, messages, isLoadingHistory, subscribeToGuestbook, fetchHistoricalMessages, addMessage } = useSomnia();
@@ -68,12 +69,14 @@ export const Guestbook = () => {
       // 4. Try to emit an event so subscribers can receive the message
       // Note: The SDK's emit method may not exist or work as expected
       try {
-        // Check if emit method exists before calling
-        if ('emit' in sdk.streams && typeof sdk.streams.emit === 'function') {
-          const eventResult = await (sdk.streams as any).emit(
-            GUESTBOOK_EVENT_ID,
-            [account, message, timestamp]
-          );
+        const streamEmitter = sdk.streams as {
+          emit?: (
+            eventId: string,
+            payload: [Address, string, number]
+          ) => Promise<Hex | Error | void>;
+        };
+        if (typeof streamEmitter.emit === 'function') {
+          const eventResult = await streamEmitter.emit(GUESTBOOK_EVENT_ID, [account, message, timestamp]);
 
           if (eventResult instanceof Error) {
             // Silently handle emit errors - message is already published
@@ -82,7 +85,7 @@ export const Guestbook = () => {
           }
         }
         // Silently skip if emit method is not available
-      } catch (emitError) {
+      } catch {
         // Silently handle emit errors - message is already published
       }
 
@@ -99,12 +102,13 @@ export const Guestbook = () => {
       // Clear the message input after sending
       setMessage('');
       
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to send message:', err);
       let errorMessage = 'Failed to send message. ';
-      if (err?.message?.includes('user rejected')) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      if (errMessage.includes('user rejected')) {
         errorMessage += 'Transaction was rejected in MetaMask.';
-      } else if (err?.message?.includes('insufficient funds')) {
+      } else if (errMessage.includes('insufficient funds')) {
         errorMessage += 'Insufficient funds for gas.';
       } else {
         errorMessage += 'Unknown error. Check console for details.';
@@ -135,6 +139,7 @@ export const Guestbook = () => {
         <button onClick={handleSign} disabled={isSending || !account}>
           {isSending ? 'Sending...' : 'Sign & Publish'}
         </button>
+        <StatusPanel />
       </div>
       
       <div className="guestbook-feed">

@@ -1,171 +1,114 @@
-# Somnia On-Chain Guestbook 📝
+# Somnia Real-Time Guestbook
 
-> **A Hackathon Project for the Somnia Data Streams Mini Hackathon**
-
-This project is a fully functional Web3 dApp that demonstrates the **"Write" pipeline** of the Somnia Data Streams (SDS) SDK. It allows users to permanently publish structured data to the Somnia Testnet.
-
-It also serves as a technical investigation into the current state of the SDK, identifying a critical regression in the subscription architecture.
+> A Somnia Data Streams SDK submission that turns on-chain guestbook entries into a live experience with diagnostics, schema automation, and hackathon-ready polish.
 
 ---
 
-## 🎥 Demo & Links
+## 🔗 Quick Links
 
-- **📺 Github repo:** [https://github.com/Rokan0-0/realtime-guestbook]
-- **📺 Demo Video:** [INSERT YOUR LOOM/YOUTUBE LINK HERE]
-
-
-
----
-
-## ✨ Key Features
-
-* **🔌 Wallet Connection:** Seamless integration with MetaMask on the Somnia Testnet (Chain ID: `50312`).
-* **📜 Auto-Schema Registration:** Automatically detects if the Data & Event schemas are registered on-chain. If not, it prompts the user to register them via `sdk.streams.registerDataSchemas()`.
-* **✍️ On-Chain Publishing:** Uses `sdk.streams.set()` to cryptographically sign and publish structured guestbook messages to the blockchain.
-* **⚡ Session Feed:** Shows messages sent during the current session (messages are permanently stored on-chain, but reading them back requires SDK functionality that's currently unavailable).
+| Resource | Link |
+| --- | --- |
+| Public Repo | https://github.com/Rokan0-0/realtime-guestbook |
+| Live dApp | `https://YOUR-VERCEL-URL.vercel.app` *(replace with final deploy link)* |
+| Demo Video (3–5 min) | `https://YOUR-VIDEO-LINK` *(add Loom/YouTube URL)* |
+| Test Guide | [TESTING-GUIDE.md](./TESTING-GUIDE.md) |
 
 ---
 
-## 🛠️ Technical Implementation
+## 🧠 What We Built
 
-### How Somnia Data Streams (SDS) is Used
+- **Write-first SDS demo:** Users connect MetaMask (Somnia Testnet, chain id `50312`), sign a message, and we encode + submit it on-chain through `sdk.streams.set`.
+- **Self-healing setup:** The dApp automatically computes schema IDs, registers data + event schemas, and configures emitter permissions the moment a wallet connects.
+- **Real-time UX:** A diagnostics panel shows live connection/schema status while a polling fallback keeps the feed updated when Somnia’s subscription helper fails.
+- **Persistence stop-gap:** Messages persist across refreshes and every entry includes an explorer link so judges can verify the on-chain data.
 
-This project demonstrates the complete **"Write" pipeline** of the Somnia Data Streams SDK:
+---
 
-1. **Schema Registration**: Automatically registers data schemas on-chain using `sdk.streams.registerDataSchemas()`
-2. **Data Encoding**: Uses `SchemaEncoder` to encode structured data into the SDS format
-3. **On-Chain Publishing**: Uses `sdk.streams.set()` to permanently store data on Somnia Testnet
-4. **Transaction Verification**: Returns transaction hashes for blockchain verification
+## ⚙️ How SDS Is Used
 
-**SDS Methods Used:**
-- `sdk.streams.computeSchemaId()` - Computes schema ID from schema definition
-- `sdk.streams.isDataSchemaRegistered()` - Checks schema registration status
-- `sdk.streams.registerDataSchemas()` - Registers schemas on-chain
-- `sdk.streams.registerEventSchemas()` - Registers event schemas for subscriptions
-- `sdk.streams.set()` - **Primary method**: Writes data to the blockchain
-- `sdk.streams.manageEventEmittersForRegisteredStreamsEvent()` - Manages event emitter permissions
+| Step | SDS Call | Purpose |
+| --- | --- | --- |
+| Schema hashing | `sdk.streams.computeSchemaId` | Derive deterministic schema id from the tuple definition |
+| Schema registration | `sdk.streams.registerDataSchemas` | Deploy the data schema if the user hasn’t already |
+| Event schema registration | `sdk.streams.registerEventSchemas` | Register the event layout used for real-time feeds |
+| Permissioning | `sdk.streams.manageEventEmittersForRegisteredStreamsEvent` | Authorize the connected wallet to emit events |
+| Publishing | `sdk.streams.set` | Primary write path (guestbook entries) |
+| Diagnostics | `sdk.streams.isDataSchemaRegistered`, `sdk.streams.getEventSchemasById` | Populate the status panel + retry flow |
 
-**Note on Read Functionality:**
-The SDK's read methods (`subscribe()` and `get()`) are currently unavailable or broken, so this implementation focuses on the fully functional write pipeline.
-
-### 1. Schema Definition
-We utilized a strictly typed schema to ensure compatibility with the SDS Encoder.
-```typescript
+```ts
 // src/config.ts
-export const GUESTBOOK_SCHEMA = `(string senderName, string messageContent, string timestamp)`;
-
----
-### 2. The "Write" Workflow
-The `handleSign` function in `Guestbook.tsx` performs the following steps:
-
-1. Validation: Checks wallet connection and schema registration status.
-
-2. Encoding: Uses `SchemaEncoder` to pack the payload into the required tuple format.
-
-3. Hashing: Generates a unique `dataId` using `keccak256`.
-
-4. Publishing: Calls `sdk.streams.set()` to write to the Somnia Testnet.
-
----
-## 🐛 Ecosystem Contribution: SDK Bug Report & Limitations
-
-### Issue 1: `subscribe()` Function Broken
-While attempting to implement full real-time bidirectional streams, I discovered a critical bug in the current version of the SDK (`@somnia-chain/streams` v0.9.5).
-
-**The Error:**
-```plaintext
-UrlRequiredError: No URL was provided to the Transport. 
-Please provide a valid RPC URL to the Transport.
+export const GUESTBOOK_SCHEMA = `(address author, string message, uint64 timestamp)`;
 ```
 
-**Root Cause:**
-The `subscribe()` function internally attempts to construct a new `publicClient` for WebSocket connections but fails to inherit the RPC URL or chain configuration passed to the main SDK instance. This results in a viem transport error that blocks all real-time subscriptions.
+### Real-Time Strategy
 
-**Impact:** Real-time subscriptions are currently impossible with the SDK.
+1. **Attempt native subscribe**: We spin up a read-only SDK instance to call `streams.subscribe`. If it works, we push live updates into React state.
+2. **Fallback polling**: When subscribe fails (known UrlRequiredError), we poll the RPC every 10s and surface block-height + timestamp in the diagnostics panel.
+3. **Optimistic feed**: After `sdk.streams.set` resolves, the UI updates immediately while linking to Shannon Explorer for on-chain validation.
 
-### Issue 2: Missing `get()` Method
-The SDK does not provide a `get()` method for on-demand data retrieval. This means there's no way to read previously stored data from the chain.
+---
 
-**Impact:** Can only write to chain, cannot read back stored data.
-
-### Workaround & Solution
-To ensure a stable, working submission, I:
-1. ✅ **Focused on the write pipeline** - Which works perfectly
-2. ✅ **Implemented session-based feed** - Shows messages sent during current session
-3. ✅ **Documented all issues** - Provided detailed bug reports for the Somnia team
-4. ✅ **Maintained production quality** - Clean, typed, well-documented code
-
-**Ecosystem Value:**
-This project serves as both a working demonstration of the write pipeline AND a comprehensive bug report that will help improve the SDK for future developers.
-
-## 🚀 Getting Started
+## 🧪 Local Development
 
 ### Prerequisites
-- Node.js (v18+)
-- MetaMask installed
-- Somnia Testnet added to MetaMask (Chain ID: `50312`)
-- STT Testnet tokens (from the [Somnia Faucet](https://faucet.somnia.network))
 
-### Installation
+- Node.js ≥ 18
+- MetaMask with Somnia Testnet added (Chain ID `50312`)
+- STT test tokens (https://faucet.somnia.network)
 
-1. **Clone the repository**
+### Install & Run
+
 ```bash
 git clone https://github.com/Rokan0-0/realtime-guestbook.git
 cd realtime-guestbook
-```
-
-2. **Install dependencies**
-```bash
 npm install
-```
-
-3. **Run the development server**
-```bash
 npm run dev
+# open http://localhost:5173
 ```
 
-4. **Open in browser**
-Navigate to `http://localhost:5173`
+### Production build
 
-### Deployment
-
-To deploy to production (Vercel/Netlify):
 ```bash
 npm run build
-# Deploy the 'dist' folder to your hosting provider
+npm run preview   # optional sanity check
 ```
 
-**Note:** The app is configured for Somnia Testnet and will work on any static hosting service.
+### Deployment (Vercel)
 
-## 📚 Tech Stack
+The repo ships with `vercel.json`. When importing into Vercel choose the **Vite** preset—build command `npm run build`, output `dist/`. The app requires no server-side secrets.
 
-- **Frontend:** React 19, Vite, TypeScript
-- **Blockchain SDK:** Somnia Data Streams SDK (`@somnia-chain/streams` v0.9.5)
-- **Web3 Libraries:** Viem 2.37
-- **Styling:** CSS Modules
-- **Network:** Somnia Testnet (Chain ID: 50312)
+---
 
-## 🎯 Project Status & Future Potential
+## 🧭 Testing Checklist
 
-### Current Status
-✅ **Write Pipeline:** Fully functional - Messages are successfully published to Somnia Testnet  
-✅ **Schema Management:** Automatic registration and validation  
-✅ **Code Quality:** Production-ready, fully typed, well-documented  
-✅ **Ecosystem Contribution:** Comprehensive SDK bug reports  
+See [TESTING-GUIDE.md](./TESTING-GUIDE.md) for a detailed flow covering:
 
-⚠️ **Read Pipeline:** Limited by SDK - No `get()` method, `subscribe()` broken
+- Wallet onboarding
+- Schema/event/emitter retries
+- Message persistence & explorer verification
+- Diagnostics copy + error reproduction steps
 
-### Future Potential
+---
 
-Once the SDK's read functionality is fixed, this project can easily evolve into:
+## ✅ Hackathon Criteria Mapping
 
-1. **Decentralized Social Platform** - Permanent, on-chain messaging
-2. **Immutable Comment Systems** - For blogs, forums, or documentation
-3. **On-Chain Guestbooks** - For events, websites, or communities
-4. **Data Storage dApp Template** - Reusable pattern for other projects
+| Criterion | How We Address It |
+| --- | --- |
+| **Technical Excellence** | Typed React + Vite app, CI-ready build, diagnostics panel, schema auto-healing, optimistic UI, explorer links |
+| **Real-Time UX** | Attempts native `subscribe`, falls back to polling with live block height + timestamp, highlights status via badges |
+| **Somnia Integration** | Everything runs on Somnia Testnet (`@somnia-chain/streams` v0.9.5); schema + event definitions deployed via SDK and verifiable on Shannon Explorer |
+| **Potential Impact** | Can evolve into on-chain comments or social feeds once read APIs are unlocked; diagnostics doubles as a bug report pipeline for Somnia core team |
 
-The architecture is already in place - only the SDK needs to support reading data back.
+---
+
+## ⚠️ Known Limitations & Future Work
+
+1. **Cross-session reads** – A public API or contract address is needed to pull historical entries (`getLogs`). Until Somnia exposes that, we mirror data in localStorage for demo stability.
+2. **SDK subscribe bug** – Documented `UrlRequiredError` prevents native WebSocket streaming. We built a polling fallback plus diagnostics so the issue is easy to triage.
+3. **Event explorer deep links** – We currently link to transaction hashes. Once Somnia exposes event filtering, the feed can become fully trustless/read-only.
+
+---
 
 ## 📄 License
 
-This project is open source and available for the Somnia community to learn from and build upon.
+MIT – free for the Somnia community to extend, fork, or integrate into other ecosystem projects.

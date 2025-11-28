@@ -16,11 +16,27 @@ import {
 import { parseAccount } from 'viem/accounts';
 import { somniaTestnet, GUESTBOOK_SCHEMA, GUESTBOOK_SCHEMA_ID, GUESTBOOK_EVENT_ID, GUESTBOOK_EVENT_SIGNATURE, GUESTBOOK_EVENT_PARAMS } from '../config'; 
 
+type StepStatus = 'idle' | 'pending' | 'success' | 'error';
+type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error';
+
 export interface GuestbookMessage {
   author: Address;
   message: string;
   timestamp: number;
   txHash?: Hex;
+}
+
+interface DiagnosticsSnapshot {
+  sdkVersion: string;
+  account?: Address | null;
+  schemaId?: Hex | null;
+  connectionStatus: ConnectionStatus;
+  schemaStatus: StepStatus;
+  eventStatus: StepStatus;
+  emitterStatus: StepStatus;
+  lastPollingBlock?: string | null;
+  lastPollingAt?: number | null;
+  lastError?: string | null;
 }
 
 interface SomniaContextType {
@@ -29,9 +45,18 @@ interface SomniaContextType {
   schemaId: Hex | null;
   messages: GuestbookMessage[];
   isLoadingHistory: boolean;
+  connectionStatus: ConnectionStatus;
+  schemaStatus: StepStatus;
+  eventStatus: StepStatus;
+  emitterStatus: StepStatus;
+  lastPollingBlock: bigint | null;
+  lastPollingAt: number | null;
+  lastError: string | null;
+  getDiagnostics: () => DiagnosticsSnapshot;
   connectWallet: () => Promise<void>;
   subscribeToGuestbook: () => Promise<void>;
   fetchHistoricalMessages: () => Promise<void>;
+  retrySchemaSetup: () => Promise<void>;
   addMessage: (message: GuestbookMessage) => void;
 }
 
@@ -43,6 +68,13 @@ export const SomniaProvider = ({ children }: { children: ReactNode }) => {
   const [schemaId, setSchemaId] = useState<Hex | null>(null);
   const [messages, setMessages] = useState<GuestbookMessage[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
+  const [schemaStatus, setSchemaStatus] = useState<StepStatus>('idle');
+  const [eventStatus, setEventStatus] = useState<StepStatus>('idle');
+  const [emitterStatus, setEmitterStatus] = useState<StepStatus>('idle');
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [lastPollingBlock, setLastPollingBlock] = useState<bigint | null>(null);
+  const [lastPollingAt, setLastPollingAt] = useState<number | null>(null);
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const publicClientRef = useRef<PublicClient | null>(null);
 
@@ -66,11 +98,9 @@ export const SomniaProvider = ({ children }: { children: ReactNode }) => {
     if (!publicClientRef.current || !schemaId) return;
 
     try {
-      // Get the latest block number
-      // Note: Without the contract address, we can't directly query events
-      // This polling is a placeholder for when we have the contract address
-      await publicClientRef.current.getBlockNumber();
-      // Silently poll - no console logs to reduce noise
+      const latestBlock = await publicClientRef.current.getBlockNumber();
+      setLastPollingBlock(latestBlock);
+      setLastPollingAt(Date.now());
     } catch (error) {
       // Only log actual errors, not routine polling
       console.error('Error polling for events:', error);
@@ -140,10 +170,10 @@ export const SomniaProvider = ({ children }: { children: ReactNode }) => {
         await (tempSdk.streams as any).subscribe(
           GUESTBOOK_EVENT_ID,
           [],
-          (event: any) => {
+          (event: { data: [Address, string, bigint] }) => {
             console.log('Received real-time event via SDK:', event);
             try {
-              const [author, message, timestamp] = event.data as [Address, string, bigint];
+              const [author, message, timestamp] = event.data;
               const newMessage: GuestbookMessage = {
                 author,
                 message,
@@ -196,6 +226,91 @@ export const SomniaProvider = ({ children }: { children: ReactNode }) => {
     console.log('Using polling fallback for real-time updates');
   }, [pollForNewEvents]);
 
+  const ensureSchemaSetup = useCallback(
+    async (sdkInstance: SDK, computedSchemaId: Hex, normalizedAddress: Address) => {
+      setSchemaStatus('pending');
+      setEventStatus('pending');
+      setEmitterStatus('pending');
+      setLastError(null);
+
+      try {
+        let isRegistered = false;
+        try {
+          const registrationStatus = await sdkInstance.streams.isDataSchemaRegistered(computedSchemaId);
+          isRegistered = registrationStatus === true;
+        } catch (checkError) {
+          isRegistered = false;
+          setLastError((checkError as Error).message ?? 'Schema check failed');
+        }
+
+        if (!isRegistered) {
+          try {
+            const regResult = await sdkInstance.streams.registerDataSchemas(
+              [{ id: GUESTBOOK_SCHEMA_ID, schema: GUESTBOOK_SCHEMA }],
+              true
+            );
+
+            if (regResult instanceof Error) {
+              throw regResult;
+            }
+          } catch (schemaError) {
+            setSchemaStatus('error');
+            setLastError((schemaError as Error).message ?? 'Schema registration failed');
+            return;
+          }
+        }
+        setSchemaStatus('success');
+      } catch (error) {
+        setSchemaStatus('error');
+        setLastError((error as Error).message ?? 'Schema registration failed');
+      }
+
+      try {
+        let isEventRegistered = false;
+        try {
+          const existingEventSchemas = await sdkInstance.streams.getEventSchemasById([GUESTBOOK_EVENT_ID]);
+          isEventRegistered = Array.isArray(existingEventSchemas) && existingEventSchemas.length > 0;
+        } catch (eventLookupError: unknown) {
+          isEventRegistered = false;
+          setLastError((eventLookupError as Error).message ?? 'Event schema lookup failed');
+        }
+
+        if (!isEventRegistered) {
+          const eventRegResult = await sdkInstance.streams.registerEventSchemas(
+            [GUESTBOOK_EVENT_ID],
+            [{ params: GUESTBOOK_EVENT_PARAMS, eventTopic: GUESTBOOK_EVENT_SIGNATURE }]
+          );
+
+          if (eventRegResult instanceof Error) {
+            throw eventRegResult;
+          }
+        }
+        setEventStatus('success');
+      } catch (eventError) {
+        setEventStatus('error');
+        setLastError((eventError as Error).message ?? 'Event schema registration failed');
+        return;
+      }
+
+      try {
+        const emitterResult = await sdkInstance.streams.manageEventEmittersForRegisteredStreamsEvent(
+          GUESTBOOK_EVENT_ID,
+          normalizedAddress,
+          true
+        );
+
+        if (emitterResult instanceof Error) {
+          throw emitterResult;
+        }
+        setEmitterStatus('success');
+      } catch (emitterError: unknown) {
+        setEmitterStatus('error');
+        setLastError((emitterError as Error).message ?? 'Emitter permissions failed');
+      }
+    },
+    []
+  );
+
   const connectWallet = async () => {
     const ethereum = (window as typeof window & { ethereum?: EIP1193Provider }).ethereum;
     if (!ethereum) {
@@ -204,6 +319,8 @@ export const SomniaProvider = ({ children }: { children: ReactNode }) => {
     }
 
     try {
+      setConnectionStatus('connecting');
+      setLastError(null);
       const wsUrl = somniaTestnet.rpcUrls.default.ws[0];
       const publicClient = createPublicClient({
         chain: somniaTestnet,
@@ -242,97 +359,12 @@ export const SomniaProvider = ({ children }: { children: ReactNode }) => {
       }
       setSchemaId(computedSchemaId);
       console.log('Schema ID Computed:', computedSchemaId);
-
-      // SOLUTION 4: Improved schema registration check with better error handling
-      console.log('Checking if schema is registered...');
-      let isRegistered: boolean = false;
-      try {
-        const registrationStatus = await somniaSdk.streams.isDataSchemaRegistered(computedSchemaId);
-        isRegistered = registrationStatus === true;
-        console.log('Schema registration status:', isRegistered);
-      } catch (checkError) {
-        console.warn('Schema registration check failed (known SDK issue), proceeding anyway:', checkError);
-        // The check is flaky, so we'll try to register anyway if it fails
-        isRegistered = false;
-      }
-      
-      if (!isRegistered) {
-        console.log('Schema not registered or check unreliable. Attempting registration...');
-        console.log('You will need to approve a transaction in MetaMask to register the schema.');
-        try {
-          const regResult = await somniaSdk.streams.registerDataSchemas([
-            { id: GUESTBOOK_SCHEMA_ID, schema: GUESTBOOK_SCHEMA }
-          ], true);
-          
-          if (regResult instanceof Error) {
-            console.error('Failed to register schema:', regResult);
-            // Don't block the user - they can try again later
-            console.warn('Schema registration failed, but continuing. User can try sending a message.');
-          } else if (regResult) {
-            console.log('Schema registered successfully! TxHash:', regResult);
-            // Don't show alert - just log it
-          } else {
-            console.log('Schema registration returned null (may already be registered or transaction was rejected)');
-          }
-        } catch (regError) {
-          console.warn('Error during schema registration attempt:', regError);
-          // Continue anyway - the schema might already be registered
-        }
-      } else {
-        console.log('Schema is already registered. Ready to publish data!');
-      }
-
-      console.log('Checking if event schema is registered...');
-      let isEventRegistered = false;
-      try {
-        const existingEventSchemas = await somniaSdk.streams.getEventSchemasById([GUESTBOOK_EVENT_ID]);
-        isEventRegistered = Array.isArray(existingEventSchemas) && existingEventSchemas.length > 0;
-      } catch (eventLookupError: unknown) {
-        console.warn('Unable to lookup event schema:', eventLookupError);
-      }
-
-      if (!isEventRegistered) {
-        console.log('Event schema not registered. Registering now...');
-        console.log('You will need to approve a transaction in MetaMask to register the event schema.');
-        const eventRegResult = await somniaSdk.streams.registerEventSchemas(
-          [GUESTBOOK_EVENT_ID],
-          [{ params: GUESTBOOK_EVENT_PARAMS, eventTopic: GUESTBOOK_EVENT_SIGNATURE }]
-        );
-
-        if (eventRegResult instanceof Error) {
-          console.error('Failed to register event schema:', eventRegResult);
-          alert(`Event schema registration failed: ${eventRegResult.message}. Please try reconnecting your wallet.`);
-        } else if (eventRegResult) {
-          console.log('Event schema registered successfully! TxHash:', eventRegResult);
-          alert(`Event schema registration transaction submitted! TxHash: ${eventRegResult}\n\nPlease wait for the transaction to be confirmed before sending messages.`);
-        } else {
-          console.log('Event schema registration returned null (may already be registered or transaction was rejected).');
-        }
-      } else {
-        console.log('Event schema is already registered. Ready to emit events!');
-      }
-
-      try {
-        console.log('Ensuring current account is authorised to emit events...');
-        const emitterResult = await somniaSdk.streams.manageEventEmittersForRegisteredStreamsEvent(
-          GUESTBOOK_EVENT_ID,
-          normalizedAddress,
-          true
-        );
-
-        if (emitterResult instanceof Error) {
-          console.error('Failed to set event emitter permissions:', emitterResult);
-        } else if (emitterResult) {
-          console.log('Event emitter permissions updated! TxHash:', emitterResult);
-        } else {
-          console.log('Event emitter permission call returned null (possibly already authorised).');
-        }
-      } catch (emitterError: unknown) {
-        console.warn('Unable to manage event emitter permissions:', emitterError);
-      }
-
+      await ensureSchemaSetup(somniaSdk, computedSchemaId, normalizedAddress);
+      setConnectionStatus('connected');
     } catch (error: unknown) {
       console.error('Failed to connect wallet or compute schema:', error);
+      setConnectionStatus('error');
+      setLastError((error as Error).message ?? 'Wallet connection failed');
     }
   };
 
@@ -354,6 +386,27 @@ export const SomniaProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
+  const getDiagnostics = useCallback<() => DiagnosticsSnapshot>(() => ({
+    sdkVersion: '0.9.5',
+    account,
+    schemaId,
+    connectionStatus,
+    schemaStatus,
+    eventStatus,
+    emitterStatus,
+    lastPollingBlock: lastPollingBlock ? lastPollingBlock.toString() : null,
+    lastPollingAt,
+    lastError,
+  }), [account, schemaId, connectionStatus, schemaStatus, eventStatus, emitterStatus, lastPollingBlock, lastPollingAt, lastError]);
+
+  const retrySchemaSetup = useCallback(async () => {
+    if (!sdk || !schemaId || !account) {
+      setLastError('Connect your wallet before retrying schema setup.');
+      return;
+    }
+    await ensureSchemaSetup(sdk, schemaId, account);
+  }, [sdk, schemaId, account, ensureSchemaSetup]);
+
   // Load historical messages on mount
   useEffect(() => {
     if (schemaId) {
@@ -368,9 +421,18 @@ export const SomniaProvider = ({ children }: { children: ReactNode }) => {
       schemaId, 
       messages, 
       isLoadingHistory,
+      connectionStatus,
+      schemaStatus,
+      eventStatus,
+      emitterStatus,
+      lastPollingBlock,
+      lastPollingAt,
+      lastError,
+      getDiagnostics,
       connectWallet, 
       subscribeToGuestbook,
       fetchHistoricalMessages,
+      retrySchemaSetup,
       addMessage,
     }}>
       {children}
