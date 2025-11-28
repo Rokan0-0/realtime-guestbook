@@ -17,15 +17,14 @@ body {
 }
 
 #root {
-  max-width: 1280px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  padding: 2rem 1.5rem;
   width: 100%;
 }
 
 .container {
-  max-width: 800px;
+  max-width: 1100px;
   margin: 0 auto;
 }
 
@@ -68,12 +67,13 @@ header h1 {
 /* Guestbook Layout */
 .guestbook-container {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2rem;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 2.5rem;
   text-align: left;
+  align-items: start;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 960px) {
   .guestbook-container {
     grid-template-columns: 1fr;
   }
@@ -105,10 +105,10 @@ header h1 {
 .guestbook-feed {
   border-left: 1px solid #555;
   padding-left: 2rem;
-  height: 60vh;
+  max-height: 70vh;
   overflow-y: auto;
 }
-@media (max-width: 768px) {
+@media (max-width: 960px) {
   .guestbook-feed {
     border-left: none;
     border-top: 1px solid #555;
@@ -116,6 +116,20 @@ header h1 {
     padding-top: 2rem;
     margin-top: 2rem;
   }
+}
+.toggle-diagnostics {
+  background-color: transparent;
+  border: 1px dashed #777;
+  color: #ddd;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.toggle-diagnostics:hover {
+  border-color: #a29bfe;
+  color: #fff;
 }
 
 .loading {

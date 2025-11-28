@@ -9,6 +9,7 @@ export const Guestbook = () => {
   const { sdk, account, schemaId, messages, isLoadingHistory, subscribeToGuestbook, fetchHistoricalMessages, addMessage } = useSomnia();
   const [message, setMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   // Subscribe to real-time updates when component mounts
   useEffect(() => {
@@ -139,7 +140,14 @@ export const Guestbook = () => {
         <button onClick={handleSign} disabled={isSending || !account}>
           {isSending ? 'Sending...' : 'Sign & Publish'}
         </button>
-        <StatusPanel />
+        <button
+          type="button"
+          className="toggle-diagnostics"
+          onClick={() => setShowDiagnostics((prev) => !prev)}
+        >
+          {showDiagnostics ? 'Hide Diagnostics' : 'Show Diagnostics'}
+        </button>
+        {showDiagnostics && <StatusPanel />}
       </div>
       
       <div className="guestbook-feed">
