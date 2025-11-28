@@ -10,7 +10,7 @@
 | --- | --- |
 | Public Repo | https://github.com/Rokan0-0/realtime-guestbook |
 | Live dApp | https://realtime-guestbook-5t7d.vercel.app/ |
-| Demo Video (3–5 min) | `https://YOUR-VIDEO-LINK` *(add Loom/YouTube URL)* |
+| Demo Video | `https://www.loom.com/share/698ccdb2da824bffabc403d9bb59eacc` *(add Loom/YouTube URL)* |
 | Test Guide | [TESTING-GUIDE.md](./TESTING-GUIDE.md) |
 
 ---
